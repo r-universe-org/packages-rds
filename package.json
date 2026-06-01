@@ -1,0 +1,26 @@
+{
+  "name": "packages-rds",
+  "version": "0.1.0",
+  "description": "Serialize an array of JSON records into R's PACKAGES.rds format (a binary RDS character matrix readable by readRDS/unserialize).",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": "./src/index.js",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "rds",
+    "r",
+    "serialization",
+    "PACKAGES",
+    "cran",
+    "webr"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "webr": "^0.6.0"
+  }
+}
