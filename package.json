@@ -1,5 +1,5 @@
 {
-  "name": "packages-rds",
+  "name": "@r-universe/packages-rds",
   "version": "0.1.0",
   "description": "Serialize an array of JSON records into R's PACKAGES.rds format (a binary RDS character matrix readable by readRDS/unserialize).",
   "type": "module",
@@ -22,5 +22,8 @@
   "license": "MIT",
   "devDependencies": {
     "webr": "^0.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
