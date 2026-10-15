@@ -129,6 +129,7 @@ export const DEFAULT_COLUMNS = [
   "OS_type",
   "SHA256",
   "Archs",
+  "Path",
   "File",
   "SystemRequirements",
   "Built",

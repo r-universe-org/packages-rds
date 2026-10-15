@@ -1,6 +1,6 @@
 {
   "name": "@r-universe/packages-rds",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Serialize an array of JSON records into R's PACKAGES.rds format (a binary RDS character matrix readable by readRDS/unserialize).",
   "type": "module",
   "main": "src/index.js",
