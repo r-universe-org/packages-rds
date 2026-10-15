@@ -12,5 +12,14 @@ let data = [
 	{ Package: "xyz", Version: "2.3" },
 ];
 
-let buf = packagesRDS(data, { columns: ["Package", "Version"], compression: "gzip" });
+let buf = packagesRDS(data, { columns: ["Package", "Version"], compress: "gzip" });
+```
+
+In servers, use `packagesRDSAsync()` instead, which returns a Promise and runs the
+gzip/zstd compression on the libuv threadpool, so it does not block the event loop:
+
+```js
+import { packagesRDSAsync } from "@r-universe/packages-rds";
+
+let buf = await packagesRDSAsync(data, { compress: "gzip" });
 ```

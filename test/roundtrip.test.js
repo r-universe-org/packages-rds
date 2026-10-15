@@ -7,7 +7,7 @@ import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { WebR } from "webr";
-import { packagesRDS, DEFAULT_COLUMNS } from "../src/index.js";
+import { packagesRDS, packagesRDSAsync, DEFAULT_COLUMNS } from "../src/index.js";
 
 // Is the system `xz` tool available? (used for the optional xz round-trip)
 const hasXz = spawnSync("xz", ["--version"]).status === 0;
@@ -161,3 +161,44 @@ test("bytes are also readable with unserialize()", () => {
     )
     .then((values) => assert.deepEqual(values, ["abc", "xyz"]));
 });
+
+test("large input (buffer growth) with UTF-8 round-trips", () => {
+  const data = Array.from({ length: 5000 }, (_, i) => ({
+    Package: `pkg${i}`,
+    Version: `${i}.0`,
+    Title: i % 2 ? `Ünïcödé ✓ 日本語 😀 ${i}` : null,
+  }));
+  return loadMatrix(packagesRDS(data, { columns: ["Package", "Version", "Title"], compress: "gzip" }))
+    .then(() => Promise.all([
+      rValues("dim(x)"),
+      rValues('x[c(1, 2, 5000), "Title"]'),
+      rValues('rownames(x)[c(1, 5000)]'),
+    ]))
+    .then(([dim, titles, rows]) => {
+      assert.deepEqual(dim, [5000, 3]);
+      assert.deepEqual(titles, [null, "Ünïcödé ✓ 日本語 😀 1", "Ünïcödé ✓ 日本語 😀 4999"]);
+      assert.deepEqual(rows, ["pkg0", "pkg4999"]);
+    });
+});
+
+test("packagesRDSAsync gives the same bytes as packagesRDS", () => {
+  const data = [{ Package: "abc", Version: "1.0" }, { Package: "xyz", Version: null }];
+  return Promise.all([
+    packagesRDSAsync(data).then((bytes) => assert.ok(bytes.equals(packagesRDS(data)))),
+    packagesRDSAsync(data, { compress: (b) => b }).then((bytes) => assert.ok(bytes.equals(packagesRDS(data)))),
+  ]);
+});
+
+for (const compress of ["gzip", "zstd"]) {
+  test(`packagesRDSAsync ${compress} output round-trips`, () => {
+    const data = [{ Package: "abc", Version: "1.0" }, { Package: "xyz", Version: "2.3" }];
+    return packagesRDSAsync(data, { columns: ["Package", "Version"], compress })
+      .then(loadMatrix)
+      .then(() => rValues("as.vector(x)"))
+      .then((values) => assert.deepEqual(values, ["abc", "xyz", "1.0", "2.3"]));
+  });
+}
+
+test("packagesRDSAsync rejects invalid input", () =>
+  assert.rejects(packagesRDSAsync("nope"), TypeError));
+

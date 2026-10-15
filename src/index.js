@@ -21,6 +21,7 @@
 // Every integer below is a 32-bit big-endian (XDR) value.
 
 import zlib from "node:zlib";
+import { promisify } from "node:util";
 
 // SEXP type codes and serialization flag bits (see R's src/main/serialize.c).
 const CHARSXP = 9;
@@ -38,23 +39,41 @@ const HAS_TAG = 1 << 10; // pairlist node carries a tag (the attribute name)
 // We always emit UTF-8 — R's native string encoding on every platform today.
 const LEVEL_UTF8 = 8; // 1<<3
 
-// A minimal growable big-endian byte writer.
+// A minimal growable big-endian byte writer. Writes into a single buffer which is
+// doubled when full, rather than allocating a small buffer for every value, which
+// is slow and causes a lot of garbage collection for large indexes.
 class Writer {
-  constructor() {
-    this.chunks = [];
+  constructor(capacity = 65536) {
+    this.buf = Buffer.allocUnsafe(capacity);
     this.length = 0;
   }
+  reserve(n) {
+    if (this.length + n <= this.buf.length) return;
+    let capacity = this.buf.length * 2;
+    while (capacity < this.length + n) capacity *= 2;
+    const buf = Buffer.allocUnsafe(capacity);
+    this.buf.copy(buf, 0, 0, this.length);
+    this.buf = buf;
+  }
   bytes(buf) {
-    this.chunks.push(buf);
+    this.reserve(buf.length);
+    buf.copy(this.buf, this.length);
     this.length += buf.length;
   }
   int(value) {
-    const b = Buffer.allocUnsafe(4);
-    b.writeInt32BE(value, 0);
-    this.bytes(b);
+    this.reserve(4);
+    this.buf.writeInt32BE(value, this.length);
+    this.length += 4;
+  }
+  // Writes the utf8 byte length of a string (int) followed by the bytes.
+  utf8(value) {
+    this.reserve(4 + value.length * 3); // a UTF-16 code unit is at most 3 utf8 bytes
+    const n = this.buf.write(value, this.length + 4, "utf8");
+    this.buf.writeInt32BE(n, this.length);
+    this.length += 4 + n;
   }
   result() {
-    return Buffer.concat(this.chunks, this.length);
+    return Buffer.from(this.buf.subarray(0, this.length)); // copy, to release the slack
   }
 }
 
@@ -76,10 +95,8 @@ function writeChar(w, value) {
     w.int(-1); // length -1 marks NA_STRING
     return;
   }
-  const buf = Buffer.from(value, "utf8");
   w.int(CHARSXP | (LEVEL_UTF8 << 12));
-  w.int(buf.length);
-  w.bytes(buf);
+  w.utf8(value);
 }
 
 // Write a character vector (STRSXP) from an array of strings/nulls.
@@ -114,6 +131,16 @@ function compressBytes(bytes, compress) {
   }
   if (typeof compress === "function") return compress(bytes);
   throw new TypeError(`unsupported compress option: ${String(compress)}`);
+}
+
+// Same as compressBytes() but gzip/zstd run on the libuv threadpool, so they do
+// not block the event loop.
+function compressBytesAsync(bytes, compress) {
+  if (compress === "gzip") return promisify(zlib.gzip)(bytes);
+  if (compress === "zstd" && typeof zlib.zstdCompress === "function") {
+    return promisify(zlib.zstdCompress)(bytes);
+  }
+  return Promise.resolve().then(() => compressBytes(bytes, compress));
 }
 
 // The columns of a typical PACKAGES index, used when `columns` is omitted.
@@ -152,7 +179,26 @@ export const DEFAULT_COLUMNS = [
  * @returns {Buffer} the RDS bytes, compressed per `options.compress`.
  */
 export function packagesRDS(data, options = {}) {
-  const { columns = DEFAULT_COLUMNS, compress } = options;
+  return compressBytes(serializeMatrix(data, options), options.compress);
+}
+
+/**
+ * Same as packagesRDS() but returns a Promise, and gzip/zstd compression runs on
+ * the libuv threadpool instead of blocking the event loop. Use this in servers.
+ *
+ * @param {object[]} data     Array of records (plain objects).
+ * @param {object}   [options] Same as packagesRDS().
+ * @returns {Promise<Buffer>} the RDS bytes, compressed per `options.compress`.
+ */
+export function packagesRDSAsync(data, options = {}) {
+  return Promise.resolve()
+    .then(() => serializeMatrix(data, options))
+    .then((bytes) => compressBytesAsync(bytes, options.compress));
+}
+
+// Serialize the records into an uncompressed RDS character matrix.
+function serializeMatrix(data, options) {
+  const { columns = DEFAULT_COLUMNS } = options;
   if (!Array.isArray(data)) throw new TypeError("data must be an array of records");
   if (!Array.isArray(columns)) throw new TypeError("columns must be an array of field names");
 
@@ -206,7 +252,7 @@ export function packagesRDS(data, options = {}) {
   // terminate the attribute pairlist
   w.int(NILVALUE_SXP);
 
-  return compressBytes(w.result(), compress);
+  return w.result();
 }
 
 export default packagesRDS;
